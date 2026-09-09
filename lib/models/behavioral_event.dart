@@ -33,13 +33,35 @@ class BehavioralEvent {
     }
   }
 
-  /// Included now for Step 2's benefit (persistence), even though
-  /// nothing in Step 1 calls this yet.
   Map<String, dynamic> toMap() {
     return {
       'type': type.name,
       'timestamp': timestamp.millisecondsSinceEpoch,
     };
+  }
+
+  /// STEP 2 ADDITION: the true inverse of toMap() — for deserializing
+  /// events already persisted in the encrypted vault. Distinct from
+  /// fromChannelMap(), which parses the native EventChannel's own
+  /// snake_case payload format instead. Do not use these two
+  /// interchangeably; they read different string formats.
+  factory BehavioralEvent.fromMap(Map<dynamic, dynamic> map) {
+    final rawTimestamp = map['timestamp'] as int?;
+    final rawType = map['type'] as String?;
+
+    final type = switch (rawType) {
+      'screenOn' => BehavioralEventType.screenOn,
+      'screenOff' => BehavioralEventType.screenOff,
+      'userPresent' => BehavioralEventType.userPresent,
+      _ => throw ArgumentError('Unknown behavioral event type: $rawType'),
+    };
+
+    return BehavioralEvent(
+      type: type,
+      timestamp: rawTimestamp != null
+          ? DateTime.fromMillisecondsSinceEpoch(rawTimestamp)
+          : DateTime.now(),
+    );
   }
 
   @override
