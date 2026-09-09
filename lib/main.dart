@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'screens/calculator_screen.dart';
+import 'services/secure_vault_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await SecureVaultService.instance.init();
+  debugPrint('[NeuralSafe] Secure vault initialized: '
+      '${SecureVaultService.instance.isInitialized}');
+
   runApp(const NeuralSafeApp());
 }
 
@@ -20,4 +27,3 @@ class NeuralSafeApp extends StatelessWidget {
     );
   }
 }
-
