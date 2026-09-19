@@ -1,25 +1,43 @@
 /// A single raw behavioral event. Originally screen-state only (Step 1);
-/// Step 3.3 adds the NeuralSafe app's own foreground/background
-/// lifecycle as an additional signal source. No aggregation or
-/// interpretation happens here — that's a later step's job.
+/// Step 3.3 added the app's own foreground/background lifecycle; Step
+/// 3.4 adds a completed-foreground-session duration signal. No
+/// aggregation or interpretation happens here — that's a later step's
+/// job.
 enum BehavioralEventType {
   screenOn,
   screenOff,
   userPresent,
   appForeground,
   appBackground,
+  appSession,
 }
 
 class BehavioralEvent {
   final BehavioralEventType type;
   final DateTime timestamp;
 
-  const BehavioralEvent({required this.type, required this.timestamp});
+  /// Only meaningful (and required) for [BehavioralEventType.appSession]:
+  /// the completed foreground session's duration in milliseconds. Null
+  /// for every other event type.
+  final int? durationMs;
+
+  const BehavioralEvent({
+    required this.type,
+    required this.timestamp,
+    this.durationMs,
+  })  : assert(
+          type != BehavioralEventType.appSession || durationMs != null,
+          'appSession events require a non-null durationMs.',
+        ),
+        assert(
+          durationMs == null || durationMs >= 0,
+          'durationMs must be null or a non-negative integer.',
+        );
 
   /// Parses the native 'neuralsafe/screen_state' EventChannel's payload.
-  /// Screen-state events only — app lifecycle events never travel
-  /// through this channel, so no appForeground/appBackground cases
-  /// exist here by design.
+  /// Screen-state events only — appForeground/appBackground/appSession
+  /// events never travel through this channel, so no such cases exist
+  /// here by design.
   factory BehavioralEvent.fromChannelMap(Map<dynamic, dynamic> map) {
     final rawTimestamp = map['timestamp'] as int?;
     return BehavioralEvent(
@@ -44,10 +62,16 @@ class BehavioralEvent {
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = <String, dynamic>{
       'type': type.name,
       'timestamp': timestamp.millisecondsSinceEpoch,
     };
+    // Only written for appSession — every other event type's persisted
+    // shape is unchanged from before Step 3.4.
+    if (durationMs != null) {
+      map['durationMs'] = durationMs;
+    }
+    return map;
   }
 
   /// The true inverse of toMap() — for deserializing events already
@@ -64,18 +88,35 @@ class BehavioralEvent {
       'userPresent' => BehavioralEventType.userPresent,
       'appForeground' => BehavioralEventType.appForeground,
       'appBackground' => BehavioralEventType.appBackground,
+      'appSession' => BehavioralEventType.appSession,
       _ => throw ArgumentError('Unknown behavioral event type: $rawType'),
     };
+
+    int? durationMs;
+    if (type == BehavioralEventType.appSession) {
+      final rawDuration = map['durationMs'];
+      if (rawDuration is int && rawDuration >= 0) {
+        durationMs = rawDuration;
+      } else {
+        throw ArgumentError(
+          'appSession event missing a valid durationMs: $rawDuration',
+        );
+      }
+    }
 
     return BehavioralEvent(
       type: type,
       timestamp: rawTimestamp != null
           ? DateTime.fromMillisecondsSinceEpoch(rawTimestamp)
           : DateTime.now(),
+      durationMs: durationMs,
     );
   }
 
   @override
-  String toString() =>
-      'BehavioralEvent(type: ${type.name}, timestamp: $timestamp)';
+  String toString() {
+    final durationPart = durationMs != null ? ', durationMs: $durationMs' : '';
+    return 'BehavioralEvent(type: ${type.name}, timestamp: $timestamp'
+        '$durationPart)';
+  }
 }
