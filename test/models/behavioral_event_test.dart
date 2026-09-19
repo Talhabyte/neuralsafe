@@ -157,5 +157,72 @@ void main() {
       expect(reconstructed.type, BehavioralEventType.appForeground);
       expect(reconstructed.durationMs, isNull);
     });
+
+    group('BehavioralEvent screenSession (Step 3.5)', () {
+      test('screenSession survives round-trip with durationMs preserved', () {
+        final original = BehavioralEvent(
+          type: BehavioralEventType.screenSession,
+          timestamp: DateTime(2026, 3, 15, 11, 0, 0),
+          durationMs: 4200,
+        );
+
+        final map = original.toMap();
+        expect(map['type'], 'screenSession');
+        expect(map['durationMs'], 4200);
+
+        final reconstructed = BehavioralEvent.fromMap(map);
+
+        expect(reconstructed.type, BehavioralEventType.screenSession);
+        expect(reconstructed.timestamp, original.timestamp);
+        expect(reconstructed.durationMs, 4200);
+      });
+
+      test('screenSession with durationMs 0 survives round-trip', () {
+        final original = BehavioralEvent(
+          type: BehavioralEventType.screenSession,
+          timestamp: DateTime(2026, 3, 15, 11, 0, 0),
+          durationMs: 0,
+        );
+
+        final reconstructed = BehavioralEvent.fromMap(original.toMap());
+
+        expect(reconstructed.durationMs, 0);
+      });
+
+      test(
+          'constructing a screenSession event without durationMs fails an '
+          'assert', () {
+        expect(
+          () => BehavioralEvent(
+            type: BehavioralEventType.screenSession,
+            timestamp: DateTime.now(),
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      });
+
+      test(
+          'fromMap() throws ArgumentError for screenSession missing '
+          'durationMs', () {
+        final badMap = {
+          'type': 'screenSession',
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+
+        expect(() => BehavioralEvent.fromMap(badMap), throwsArgumentError);
+      });
+
+      test(
+          'fromMap() throws ArgumentError for screenSession with negative '
+          'durationMs', () {
+        final badMap = {
+          'type': 'screenSession',
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+          'durationMs': -1,
+        };
+
+        expect(() => BehavioralEvent.fromMap(badMap), throwsArgumentError);
+      });
+    });
   });
 }

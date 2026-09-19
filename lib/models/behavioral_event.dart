@@ -1,6 +1,7 @@
 /// A single raw behavioral event. Originally screen-state only (Step 1);
 /// Step 3.3 added the app's own foreground/background lifecycle; Step
-/// 3.4 adds a completed-foreground-session duration signal. No
+/// 3.4 added a completed-foreground-session duration signal; Step 3.5
+/// adds a derived device screen-on session duration signal. No
 /// aggregation or interpretation happens here — that's a later step's
 /// job.
 enum BehavioralEventType {
@@ -10,15 +11,16 @@ enum BehavioralEventType {
   appForeground,
   appBackground,
   appSession,
+  screenSession,
 }
 
 class BehavioralEvent {
   final BehavioralEventType type;
   final DateTime timestamp;
 
-  /// Only meaningful (and required) for [BehavioralEventType.appSession]:
-  /// the completed foreground session's duration in milliseconds. Null
-  /// for every other event type.
+  /// Only meaningful (and required) for [BehavioralEventType.appSession]
+  /// and [BehavioralEventType.screenSession]: the completed session's
+  /// duration in milliseconds. Null for every other event type.
   final int? durationMs;
 
   const BehavioralEvent({
@@ -26,8 +28,10 @@ class BehavioralEvent {
     required this.timestamp,
     this.durationMs,
   })  : assert(
-          type != BehavioralEventType.appSession || durationMs != null,
-          'appSession events require a non-null durationMs.',
+          (type != BehavioralEventType.appSession &&
+                  type != BehavioralEventType.screenSession) ||
+              durationMs != null,
+          'appSession/screenSession events require a non-null durationMs.',
         ),
         assert(
           durationMs == null || durationMs >= 0,
@@ -35,9 +39,10 @@ class BehavioralEvent {
         );
 
   /// Parses the native 'neuralsafe/screen_state' EventChannel's payload.
-  /// Screen-state events only — appForeground/appBackground/appSession
-  /// events never travel through this channel, so no such cases exist
-  /// here by design.
+  /// Screen-state events only — appForeground/appBackground/appSession/
+  /// screenSession events never travel through this channel, so no
+  /// such cases exist here by design. screenSession in particular is a
+  /// Flutter-side derived event, never a native channel event.
   factory BehavioralEvent.fromChannelMap(Map<dynamic, dynamic> map) {
     final rawTimestamp = map['timestamp'] as int?;
     return BehavioralEvent(
@@ -66,8 +71,8 @@ class BehavioralEvent {
       'type': type.name,
       'timestamp': timestamp.millisecondsSinceEpoch,
     };
-    // Only written for appSession — every other event type's persisted
-    // shape is unchanged from before Step 3.4.
+    // Only written for appSession/screenSession — every other event
+    // type's persisted shape is unchanged.
     if (durationMs != null) {
       map['durationMs'] = durationMs;
     }
@@ -89,17 +94,19 @@ class BehavioralEvent {
       'appForeground' => BehavioralEventType.appForeground,
       'appBackground' => BehavioralEventType.appBackground,
       'appSession' => BehavioralEventType.appSession,
+      'screenSession' => BehavioralEventType.screenSession,
       _ => throw ArgumentError('Unknown behavioral event type: $rawType'),
     };
 
     int? durationMs;
-    if (type == BehavioralEventType.appSession) {
+    if (type == BehavioralEventType.appSession ||
+        type == BehavioralEventType.screenSession) {
       final rawDuration = map['durationMs'];
       if (rawDuration is int && rawDuration >= 0) {
         durationMs = rawDuration;
       } else {
         throw ArgumentError(
-          'appSession event missing a valid durationMs: $rawDuration',
+          'Event type ${type.name} missing a valid durationMs: $rawDuration',
         );
       }
     }
