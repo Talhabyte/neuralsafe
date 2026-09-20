@@ -2,109 +2,162 @@ import 'package:flutter/foundation.dart';
 
 import '../models/behavioral_event.dart';
 import 'app_lifecycle_service.dart';
+import 'app_usage_service.dart';
+import 'behavioral_event_aggregator.dart';
 import 'behavioral_event_collector.dart';
 import 'behavioral_event_repository.dart';
 import 'screen_session_service.dart';
 
+/// Serializes every write into BehavioralEventRepository behind one
+/// FIFO queue, regardless of which source (screen events, derived
+/// screenSession, app lifecycle, derived appSession, or derived
+/// appUsageSession) is calling it. This closes a pre-existing gap:
+/// prior to this, the collector and AppLifecycleService each called
+/// repository.save() independently, with no guarantee against two
+/// saves' read-modify-write cycles interleaving (the same class of
+/// bug fixed for appSession/appBackground in Step 3.4, just between
+/// two different sources instead of within one). BehavioralEventRepository
+/// itself is NOT modified — this is purely a call-site discipline
+/// change in how the app's sources are wired together.
+///
+/// Note: BehavioralEventAggregator does NOT go through this writer —
+/// it only ever reads via BehavioralEventRepository.loadAll(), never
+/// calls save(), so it has no write-concurrency exposure to guard
+/// against here.
+class _SerializedEventWriter {
+  _SerializedEventWriter(this._repository);
+  final BehavioralEventRepository _repository;
+  Future<void> _tail = Future<void>.value();
+
+  Future<void> call(BehavioralEvent event) {
+    final result = _tail.then((_) => _repository.save(event));
+    // Swallow errors in the chain itself so one failed save doesn't
+    // permanently wedge the queue for subsequent, unrelated events —
+    // the error still propagates to whoever awaited this specific call.
+    _tail = result.catchError((_) {});
+    return result;
+  }
+}
+
 /// Owns the application-level lifecycle of ALL behavioral event
-/// collection: screen state (via BehavioralEventCollector), the app's
-/// own foreground/background lifecycle (via AppLifecycleService,
-/// Step 3.3), and, as of Step 3.5, derived device screen-on session
-/// duration (via ScreenSessionService). No source's collection or
-/// persistence logic is duplicated here — this only starts/stops all
-/// three together and, for the production singleton, wires
-/// ScreenSessionService to observe the same raw screen events
-/// BehavioralEventCollector already persists, sequentially and never
-/// concurrently.
+/// collection: screen state (via BehavioralEventCollector), derived
+/// screen-on session duration (via ScreenSessionService), the app's
+/// own foreground/background lifecycle and derived session duration
+/// (via AppLifecycleService), derived Android app-usage session
+/// duration (via AppUsageService), and, as of this wiring, cross-source
+/// batch aggregation (via BehavioralEventAggregator, which reads back
+/// from the same repository every other source writes into). No
+/// source's collection or persistence logic is duplicated here — this
+/// only starts/stops all sources together and, for the production
+/// singleton, wires every WRITING source through the single serialized
+/// writer above so no two sources' saves can ever race each other.
 class BehavioralMonitoringService {
   BehavioralMonitoringService._({
     required BehavioralEventCollector collector,
     required AppLifecycleService? lifecycleService,
     required ScreenSessionService? screenSessionService,
+    required AppUsageService? appUsageService,
+    required BehavioralEventAggregator? aggregator,
   })  : _collector = collector,
         _lifecycleService = lifecycleService,
-        _screenSessionService = screenSessionService;
+        _screenSessionService = screenSessionService,
+        _appUsageService = appUsageService,
+        _aggregator = aggregator;
 
   static BehavioralMonitoringService? _instance;
 
+  /// Must match the Android applicationId / Kotlin package
+  /// (com.example.neuralsafe, per MainActivity.kt) so AppUsageService
+  /// correctly excludes NeuralSafe's own usage from appUsageSession
+  /// events. If the applicationId is ever changed from the Flutter
+  /// default, this constant must be updated to match — there is no
+  /// dependency-free way to read it at runtime without adding a
+  /// package-info plugin, which this step deliberately avoids.
+  static const _ownPackageName = 'com.example.neuralsafe';
+
   /// Application-level singleton. Always owns a real
-  /// BehavioralEventCollector, AppLifecycleService, and
-  /// ScreenSessionService.
-  ///
-  /// The collector's onEvent is wired to persist each raw event AND
-  /// THEN (awaited, sequentially — never concurrently) feed it to
-  /// ScreenSessionService.handleEvent(), so a derived screenSession
-  /// save never races the raw event's own save against the encrypted
-  /// vault's read-modify-write persistence.
+  /// BehavioralEventCollector, AppLifecycleService, ScreenSessionService,
+  /// AppUsageService, and BehavioralEventAggregator, with every writing
+  /// source wired through one shared _SerializedEventWriter so every
+  /// persisted write across every source happens strictly one at a
+  /// time. The aggregator is currently unconsumed downstream (no
+  /// onBatch/listener wired) — it runs and correctly discovers new
+  /// events across all sources, but nothing acts on the batches yet.
   static BehavioralMonitoringService get instance {
     if (_instance != null) return _instance!;
 
-    final screenSessionService = ScreenSessionService();
     final repository = BehavioralEventRepository();
+    final writer = _SerializedEventWriter(repository);
 
-    // Step 3.5 ordering fix (learned from the Step 3.4 physical
-    // Android test): during the screen_off transition, the derived
-    // screenSession is the priority signal, so it must be persisted
-    // BEFORE the raw screenOff event, not after — the second of two
-    // sequential awaited saves during an Android lifecycle transition
-    // is the one at risk of being lost, so the priority write goes
-    // first. handleEvent() itself derives AND persists screenSession
-    // (a no-op unless a screen session is actually active, e.g. it is
-    // a no-op for screen_on and for a duplicate screen_off).
-    //
-    // For every other event type (screenOn, userPresent, and anything
-    // else), the raw event's own save still happens first, as before
-    // Step 3.5 — screen_on's only effect on ScreenSessionService is
-    // an in-memory start-time write with no persistence, so ordering
-    // relative to the raw save doesn't matter for it, but keeping the
-    // raw-save-first order for every non-screenOff type preserves
-    // Step 3.1–3.4 behavior exactly and keeps the special case
-    // narrowly scoped to the one type that actually needs it.
+    final screenSessionService = ScreenSessionService(onEvent: writer.call);
+
     final collector = BehavioralEventCollector(
       onEvent: (event) async {
         if (event.type == BehavioralEventType.screenOff) {
+          // screenSession is the priority signal during the
+          // screen-off transition (Step 3.5 physical-testing lesson):
+          // persist it first, fully awaited, before the raw screenOff
+          // event.
           await screenSessionService.handleEvent(event);
-          await repository.save(event);
+          await writer(event);
         } else {
-          await repository.save(event);
+          await writer(event);
           await screenSessionService.handleEvent(event);
         }
       },
     );
 
+    final lifecycleService = AppLifecycleService(onEvent: writer.call);
+
+    final appUsageService = AppUsageService(
+      ownPackageName: _ownPackageName,
+      onEvent: writer.call,
+    );
+
     _instance = BehavioralMonitoringService._(
       collector: collector,
-      lifecycleService: AppLifecycleService(),
+      lifecycleService: lifecycleService,
       screenSessionService: screenSessionService,
+      appUsageService: appUsageService,
+      aggregator: BehavioralEventAggregator(),
     );
     return _instance!;
   }
 
-  /// Test-only construction path. [lifecycleService] and
-  /// [screenSessionService] are optional and, when omitted, that
-  /// source is simply not started/stopped/considered — existing tests
-  /// that only inject a collector continue to work exactly as before.
+  /// Test-only construction path. Every optional parameter defaults to
+  /// null, meaning that source is simply not started/stopped/
+  /// considered — existing tests that only inject a collector (or a
+  /// collector plus a subset of the other sources) continue to work
+  /// exactly as before, unaffected by later additions.
   @visibleForTesting
   factory BehavioralMonitoringService.test({
     required BehavioralEventCollector collector,
     AppLifecycleService? lifecycleService,
     ScreenSessionService? screenSessionService,
+    AppUsageService? appUsageService,
+    BehavioralEventAggregator? aggregator,
   }) {
     return BehavioralMonitoringService._(
       collector: collector,
       lifecycleService: lifecycleService,
       screenSessionService: screenSessionService,
+      appUsageService: appUsageService,
+      aggregator: aggregator,
     );
   }
 
   final BehavioralEventCollector _collector;
   final AppLifecycleService? _lifecycleService;
   final ScreenSessionService? _screenSessionService;
+  final AppUsageService? _appUsageService;
+  final BehavioralEventAggregator? _aggregator;
 
   bool get isRunning =>
       _collector.isRunning &&
       (_lifecycleService?.isRunning ?? true) &&
-      (_screenSessionService?.isRunning ?? true);
+      (_screenSessionService?.isRunning ?? true) &&
+      (_appUsageService?.isRunning ?? true) &&
+      (_aggregator?.isRunning ?? true);
 
   void start() {
     if (!_collector.isRunning) {
@@ -118,11 +171,21 @@ class BehavioralMonitoringService {
     if (screenSessionService != null && !screenSessionService.isRunning) {
       screenSessionService.start();
     }
+    final appUsageService = _appUsageService;
+    if (appUsageService != null && !appUsageService.isRunning) {
+      appUsageService.start();
+    }
+    final aggregator = _aggregator;
+    if (aggregator != null && !aggregator.isRunning) {
+      aggregator.start();
+    }
   }
 
   Future<void> stop() async {
     await _collector.stop();
     await _lifecycleService?.stop();
     await _screenSessionService?.stop();
+    await _appUsageService?.stop();
+    _aggregator?.stop();
   }
 }

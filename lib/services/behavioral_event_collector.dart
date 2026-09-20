@@ -9,7 +9,7 @@ import 'screen_activity_service.dart';
 /// responsibilities into either class.
 ///
 /// ScreenActivityService stays responsible only for exposing the native
-/// screen-state EventChannel as a Stream<BehavioralEvent>.
+/// screen-state EventChannel as a Stream BehavioralEvent
 /// BehavioralEventRepository stays responsible only for encrypted
 /// persistence. This class's only job is: when an event arrives on the
 /// stream, forward it to be saved.

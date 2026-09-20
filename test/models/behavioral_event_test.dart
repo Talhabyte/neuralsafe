@@ -223,6 +223,92 @@ void main() {
 
         expect(() => BehavioralEvent.fromMap(badMap), throwsArgumentError);
       });
+      group('BehavioralEvent appUsageSession (Step 3.6)', () {
+        test(
+            'appUsageSession survives round-trip with durationMs and '
+            'packageName preserved', () {
+          final original = BehavioralEvent(
+            type: BehavioralEventType.appUsageSession,
+            timestamp: DateTime(2026, 3, 15, 12, 0, 0),
+            durationMs: 8000,
+            packageName: 'com.example.someapp',
+          );
+
+          final map = original.toMap();
+          expect(map['durationMs'], 8000);
+          expect(map['packageName'], 'com.example.someapp');
+
+          final reconstructed = BehavioralEvent.fromMap(map);
+
+          expect(reconstructed.type, BehavioralEventType.appUsageSession);
+          expect(reconstructed.timestamp, original.timestamp);
+          expect(reconstructed.durationMs, 8000);
+          expect(reconstructed.packageName, 'com.example.someapp');
+        });
+
+        test(
+            'constructing appUsageSession without packageName fails an '
+            'assert', () {
+          expect(
+            () => BehavioralEvent(
+              type: BehavioralEventType.appUsageSession,
+              timestamp: DateTime.now(),
+              durationMs: 100,
+            ),
+            throwsA(isA<AssertionError>()),
+          );
+        });
+
+        test(
+            'constructing appUsageSession without durationMs fails an '
+            'assert', () {
+          expect(
+            () => BehavioralEvent(
+              type: BehavioralEventType.appUsageSession,
+              timestamp: DateTime.now(),
+              packageName: 'com.example.someapp',
+            ),
+            throwsA(isA<AssertionError>()),
+          );
+        });
+
+        test(
+            'fromMap() throws ArgumentError for appUsageSession missing '
+            'packageName', () {
+          final badMap = {
+            'type': 'appUsageSession',
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+            'durationMs': 500,
+          };
+
+          expect(() => BehavioralEvent.fromMap(badMap), throwsArgumentError);
+        });
+
+        test(
+            'fromMap() throws ArgumentError for appUsageSession missing '
+            'durationMs', () {
+          final badMap = {
+            'type': 'appUsageSession',
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+            'packageName': 'com.example.someapp',
+          };
+
+          expect(() => BehavioralEvent.fromMap(badMap), throwsArgumentError);
+        });
+
+        test(
+            'fromMap() throws ArgumentError for appUsageSession with empty '
+            'packageName', () {
+          final badMap = {
+            'type': 'appUsageSession',
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+            'durationMs': 500,
+            'packageName': '',
+          };
+
+          expect(() => BehavioralEvent.fromMap(badMap), throwsArgumentError);
+        });
+      });
     });
   });
 }

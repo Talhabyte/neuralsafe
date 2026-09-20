@@ -7,6 +7,6 @@ void main() {
       (WidgetTester tester) async {
     await tester.pumpWidget(const NeuralSafeApp());
 
-    expect(find.text('0'), findsOneWidget);
+    expect(find.text('0'), findsNWidgets(2));
   });
 }

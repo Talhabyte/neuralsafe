@@ -1,9 +1,8 @@
 /// A single raw behavioral event. Originally screen-state only (Step 1);
-/// Step 3.3 added the app's own foreground/background lifecycle; Step
-/// 3.4 added a completed-foreground-session duration signal; Step 3.5
-/// adds a derived device screen-on session duration signal. No
-/// aggregation or interpretation happens here — that's a later step's
-/// job.
+/// later steps added app lifecycle, app session duration, screen
+/// session duration, and (Step 3.6) derived app-usage session duration.
+/// No aggregation or interpretation happens here — that's a later
+/// step's job.
 enum BehavioralEventType {
   screenOn,
   screenOff,
@@ -12,37 +11,53 @@ enum BehavioralEventType {
   appBackground,
   appSession,
   screenSession,
+  appUsageSession,
 }
 
 class BehavioralEvent {
   final BehavioralEventType type;
   final DateTime timestamp;
 
-  /// Only meaningful (and required) for [BehavioralEventType.appSession]
-  /// and [BehavioralEventType.screenSession]: the completed session's
-  /// duration in milliseconds. Null for every other event type.
+  /// Only meaningful (and required) for appSession, screenSession, and
+  /// appUsageSession: the completed session's duration in milliseconds.
+  /// Null for every other event type.
   final int? durationMs;
+
+  /// Only meaningful (and required) for appUsageSession: the Android
+  /// package name the session belongs to. Null for every other event
+  /// type. NeuralSafe's own package is never represented here — it is
+  /// excluded at the AppUsageService layer.
+  final String? packageName;
 
   const BehavioralEvent({
     required this.type,
     required this.timestamp,
     this.durationMs,
+    this.packageName,
   })  : assert(
           (type != BehavioralEventType.appSession &&
-                  type != BehavioralEventType.screenSession) ||
+                  type != BehavioralEventType.screenSession &&
+                  type != BehavioralEventType.appUsageSession) ||
               durationMs != null,
-          'appSession/screenSession events require a non-null durationMs.',
+          'appSession/screenSession/appUsageSession events require a '
+          'non-null durationMs.',
         ),
         assert(
           durationMs == null || durationMs >= 0,
           'durationMs must be null or a non-negative integer.',
+        ),
+        assert(
+          type != BehavioralEventType.appUsageSession ||
+              (packageName != null && packageName != ''),
+          'appUsageSession events require a non-empty packageName.',
         );
 
   /// Parses the native 'neuralsafe/screen_state' EventChannel's payload.
-  /// Screen-state events only — appForeground/appBackground/appSession/
-  /// screenSession events never travel through this channel, so no
-  /// such cases exist here by design. screenSession in particular is a
-  /// Flutter-side derived event, never a native channel event.
+  /// Screen-state events only — every derived/lifecycle event type
+  /// never travels through this channel, so no such cases exist here
+  /// by design. appUsageSession in particular is derived entirely on
+  /// the Dart side from polled UsageStatsManager data, never a native
+  /// channel event.
   factory BehavioralEvent.fromChannelMap(Map<dynamic, dynamic> map) {
     final rawTimestamp = map['timestamp'] as int?;
     return BehavioralEvent(
@@ -71,10 +86,13 @@ class BehavioralEvent {
       'type': type.name,
       'timestamp': timestamp.millisecondsSinceEpoch,
     };
-    // Only written for appSession/screenSession — every other event
-    // type's persisted shape is unchanged.
+    // Only written when present — every other event type's persisted
+    // shape is unchanged.
     if (durationMs != null) {
       map['durationMs'] = durationMs;
+    }
+    if (packageName != null) {
+      map['packageName'] = packageName;
     }
     return map;
   }
@@ -95,12 +113,14 @@ class BehavioralEvent {
       'appBackground' => BehavioralEventType.appBackground,
       'appSession' => BehavioralEventType.appSession,
       'screenSession' => BehavioralEventType.screenSession,
+      'appUsageSession' => BehavioralEventType.appUsageSession,
       _ => throw ArgumentError('Unknown behavioral event type: $rawType'),
     };
 
     int? durationMs;
     if (type == BehavioralEventType.appSession ||
-        type == BehavioralEventType.screenSession) {
+        type == BehavioralEventType.screenSession ||
+        type == BehavioralEventType.appUsageSession) {
       final rawDuration = map['durationMs'];
       if (rawDuration is int && rawDuration >= 0) {
         durationMs = rawDuration;
@@ -111,19 +131,35 @@ class BehavioralEvent {
       }
     }
 
+    String? packageName;
+    if (type == BehavioralEventType.appUsageSession) {
+      final rawPackageName = map['packageName'];
+      if (rawPackageName is String && rawPackageName.isNotEmpty) {
+        packageName = rawPackageName;
+      } else {
+        throw ArgumentError(
+          'appUsageSession event missing a valid packageName: '
+          '$rawPackageName',
+        );
+      }
+    }
+
     return BehavioralEvent(
       type: type,
       timestamp: rawTimestamp != null
           ? DateTime.fromMillisecondsSinceEpoch(rawTimestamp)
           : DateTime.now(),
       durationMs: durationMs,
+      packageName: packageName,
     );
   }
 
   @override
   String toString() {
     final durationPart = durationMs != null ? ', durationMs: $durationMs' : '';
+    final packagePart =
+        packageName != null ? ', packageName: $packageName' : '';
     return 'BehavioralEvent(type: ${type.name}, timestamp: $timestamp'
-        '$durationPart)';
+        '$durationPart$packagePart)';
   }
 }
