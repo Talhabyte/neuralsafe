@@ -11,12 +11,13 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 
-    // Phase 3 Step 1: screen lock/unlock event stream.
     private val screenStateChannelName = "neuralsafe/screen_state"
     private var screenStateReceiver: ScreenStateReceiver? = null
 
-    // Phase 3 Step 3.6: app-usage/context signal (UsageStatsManager).
     private val appUsageChannelName = "neuralsafe/app_usage"
+
+    // Phase 6: emergency SMS dispatch.
+    private val smsGatewayChannelName = "neuralsafe/sms_gateway"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -61,6 +62,23 @@ class MainActivity : FlutterActivity() {
                             result.error("INVALID_ARGS", "since/until required", null)
                         } else {
                             result.success(appUsageChannel.queryEvents(since, until))
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        val smsGatewayChannel = SmsGatewayChannel()
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, smsGatewayChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "sendSms" -> {
+                        val phoneNumber = call.argument<String>("phoneNumber")
+                        val message = call.argument<String>("message")
+                        if (phoneNumber == null || message == null) {
+                            result.error("INVALID_ARGS", "phoneNumber/message required", null)
+                        } else {
+                            result.success(smsGatewayChannel.sendSms(phoneNumber, message))
                         }
                     }
                     else -> result.notImplemented()
