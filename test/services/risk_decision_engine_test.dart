@@ -241,5 +241,62 @@ void main() {
       await controller.close();
       await engine.dispose();
     });
+    test(
+        'submitTextScore fuses the text score with the most recent '
+        'behavior score, not in isolation', () async {
+      final controller = StreamController<AnomalyResultLogEntry>();
+      final engine = RiskDecisionEngine(anomalyStream: controller.stream);
+
+      engine.start();
+      controller.add(_evaluatedEntry(aggregateScore: 40.0)); // behavior=40
+      await Future<void>.delayed(Duration.zero);
+
+      engine.submitTextScore(80.0); // now fuse behavior=40 + text=80
+
+      // weights: text 0.35, behavior 0.20 -> total active 0.55
+      // renormalized: text = 0.35/0.55, behavior = 0.20/0.55
+      final expected = (0.35 / 0.55) * 80.0 + (0.20 / 0.55) * 40.0;
+      expect(engine.latest!.fusionResult.finalScore, closeTo(expected, 1e-6));
+      expect(
+          engine.latest!.fusionResult.contributingModules.containsKey('text'),
+          true);
+      expect(
+          engine.latest!.fusionResult.contributingModules
+              .containsKey('behavior'),
+          true);
+
+      await engine.stop();
+      await controller.close();
+      await engine.dispose();
+    });
+
+    test(
+        'a later behavior update re-fuses using the cached text score, '
+        'not discarding it', () async {
+      final controller = StreamController<AnomalyResultLogEntry>();
+      final engine = RiskDecisionEngine(anomalyStream: controller.stream);
+
+      engine.start();
+      engine.submitTextScore(90.0); // text=90, no behavior yet
+
+      expect(
+          engine.latest!.fusionResult.contributingModules.containsKey('text'),
+          true);
+      expect(
+          engine.latest!.fusionResult.contributingModules
+              .containsKey('behavior'),
+          false);
+
+      controller.add(_evaluatedEntry(aggregateScore: 10.0)); // behavior=10
+      await Future<void>.delayed(Duration.zero);
+
+      // text score of 90 should still be contributing here
+      final expected = (0.35 / 0.55) * 90.0 + (0.20 / 0.55) * 10.0;
+      expect(engine.latest!.fusionResult.finalScore, closeTo(expected, 1e-6));
+
+      await engine.stop();
+      await controller.close();
+      await engine.dispose();
+    });
   });
 }

@@ -1,4 +1,3 @@
-import '../models/behavioral_baseline.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/behavioral_event.dart';
