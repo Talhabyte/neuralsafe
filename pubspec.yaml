@@ -10,7 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.6
-
+  
+  
   # Phase 2: local encrypted storage
   hive: ^2.2.3
   hive_flutter: ^1.1.0
@@ -23,6 +24,10 @@ dependencies:
   # Phase 4/5: on-device AI inference
   tflite_flutter: ^0.12.1
   dart_sentencepiece_tokenizer: ^1.3.1
+
+  # Phase 6: on-device voice/audio inference
+  record: ^6.2.1
+  fftea: ^1.5.0
 
   # Phase 7: alerts
   # telephony: ^0.2.0   # SMS sending (Android only - added in Phase 7)
@@ -38,3 +43,7 @@ flutter:
   assets:
     - assets/ml/neuralsafe_text_model.tflite
     - assets/ml/sentencepiece.bpe.model
+    - assets/ml/neuralsafe_voice_model_v2.tflite
+    - assets/ml/mel_filterbank.bin
+    - assets/ml/expected_log_mel.bin
+    - assets/ml/test_audio_window.bin

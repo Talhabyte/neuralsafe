@@ -11,15 +11,15 @@ import 'danger_score_fusion_engine.dart';
 /// RiskDecision. Maintains state (latest decision) and exposes a
 /// stream — performs NO side effects: no SMS, no GPS, no UI
 /// notification, no persistence of its own, and no ML inference of
-/// its own — text scores are computed elsewhere (TextAnalysisService)
-/// and only handed in via submitTextScore().
+/// its own — text and voice scores are computed elsewhere
+/// (TextAnalysisService, VoiceAnalysisService) and only handed in via
+/// submitTextScore()/submitVoiceScore().
 ///
-/// 'voice' is always passed as null to the fusion engine, since no
-/// such module exists yet in this codebase. 'behavior' is fed from
-/// the anomaly stream, and 'text' is fed from submitTextScore(),
-/// called by whatever owns the message-capture flow. Both are cached
-/// so either input can trigger a fresh fused RiskDecision using the
-/// other's most recent value.
+/// 'behavior' is fed from the anomaly stream, 'text' from
+/// submitTextScore(), and 'voice' from submitVoiceScore() — each
+/// called by whatever owns that module's capture flow. All three are
+/// cached so any one input can trigger a fresh fused RiskDecision
+/// using the other two's most recent values.
 ///
 /// A cold-start AnomalyResult (baseline not yet warm) is deliberately
 /// passed to the fusion engine as a null behavior score, not as 0 —
@@ -48,6 +48,7 @@ class RiskDecisionEngine {
 
   double? _latestBehaviorScore;
   double? _latestTextScore;
+  double? _latestVoiceScore;
 
   Stream<RiskDecision> get decisions => _controller.stream;
 
@@ -73,15 +74,31 @@ class RiskDecisionEngine {
 
   /// Records a fresh TextScore (0-100, from TextAnalysisService, via
   /// whatever owns the message-capture flow) and immediately emits a
-  /// new RiskDecision fusing it with the most recent behavior score.
-  /// This method performs no inference and no I/O itself — the caller
-  /// is responsible for having already computed [score].
+  /// new RiskDecision fusing it with the most recent behavior/voice
+  /// scores. This method performs no inference and no I/O itself —
+  /// the caller is responsible for having already computed [score].
   void submitTextScore(
     double score, {
     DateTime? evaluatedAt,
     String windowKey = 'text-event',
   }) {
     _latestTextScore = score;
+    _emitDecision(
+      evaluatedAt: evaluatedAt ?? DateTime.now(),
+      windowKey: windowKey,
+    );
+  }
+
+  /// Records a fresh VoiceScore (0-100, from VoiceAnalysisService,
+  /// normally on a ~500ms cadence) and immediately emits a new
+  /// RiskDecision fusing it with the most recent text/behavior
+  /// scores. Performs no inference and no I/O itself.
+  void submitVoiceScore(
+    double score, {
+    DateTime? evaluatedAt,
+    String windowKey = 'voice-event',
+  }) {
+    _latestVoiceScore = score;
     _emitDecision(
       evaluatedAt: evaluatedAt ?? DateTime.now(),
       windowKey: windowKey,
@@ -102,7 +119,7 @@ class RiskDecisionEngine {
   void _emitDecision(
       {required DateTime evaluatedAt, required String windowKey}) {
     final fusionResult = _fusionEngine.fuse({
-      'voice': null,
+      'voice': _latestVoiceScore,
       'text': _latestTextScore,
       'behavior': _latestBehaviorScore,
     });

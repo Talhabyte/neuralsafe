@@ -3,6 +3,7 @@ import 'screens/calculator_screen.dart';
 import 'services/secure_vault_service.dart';
 import 'services/behavioral_monitoring_service.dart';
 import 'services/text_analysis_service.dart';
+import 'services/voice_analysis_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +14,9 @@ void main() async {
   await TextAnalysisService.instance.init();
   debugPrint('[NeuralSafe] Text analysis service initialized: '
       '${TextAnalysisService.instance.isInitialized}');
+  await VoiceAnalysisService.instance.init();
+  debugPrint('[NeuralSafe] Voice analysis service initialized: '
+      '${VoiceAnalysisService.instance.isInitialized}');
   runApp(const NeuralSafeApp());
 }
 
