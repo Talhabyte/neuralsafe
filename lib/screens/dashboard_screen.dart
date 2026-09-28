@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../models/anomaly_result_log_entry.dart';
 import '../services/emergency_contact_repository.dart';
 import '../services/onboarding_repository.dart';
 import '../services/risk_decision_engine.dart';
@@ -26,12 +25,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final _profileRepo = UserProfileRepository();
   final _contactRepo = EmergencyContactRepository();
 
+  // The real, persistent, app-level fusion engine (constructed and
+  // started once in main.dart, fed continuously by the Behavioral
+  // pipeline). This screen only submits Text/Voice scores into it and
+  // reads its latest decision back — it does NOT own its lifecycle.
+  RiskDecisionEngine get _riskEngine => RiskDecisionEngine.instance;
+
   // --- Text module manual test hook (temporary, until real SMS
   // interception / MessageInterceptor is built) ---
-  final _behaviorController =
-      StreamController<AnomalyResultLogEntry>.broadcast();
-  late final RiskDecisionEngine _riskEngine =
-      RiskDecisionEngine(anomalyStream: _behaviorController.stream)..start();
   final _textController = TextEditingController();
   TextAnalysisResult? _lastTextResult;
   bool _isAnalyzing = false;
@@ -109,9 +110,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_isVoiceRunning) {
       VoiceAnalysisService.instance.stop();
     }
-    _riskEngine.stop();
-    _riskEngine.dispose();
-    _behaviorController.close();
+    // _riskEngine is the app-level singleton (RiskDecisionEngine.instance)
+    // — it is NOT stopped/disposed here, since it must keep running for
+    // the whole app's lifetime, not just while this screen is open.
     super.dispose();
   }
 
